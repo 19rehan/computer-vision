@@ -1,0 +1,85 @@
+import cv2
+import mediapipe as mp
+import pywifi
+import time
+
+# Initialize mediapipe hands
+mp_hands = mp.solutions.hands
+hands = mp_hands.Hands(max_num_hands=1)
+mp_draw = mp.solutions.drawing_utils
+
+# WiFi interface setup
+wifi = pywifi.PyWiFi()
+iface = wifi.interfaces()[0]
+
+# Get initial state to avoid rapid toggling
+last_action_time = time.time()
+cooldown = 3  # seconds
+
+# Finger tip IDs (index to pinky)
+tip_ids = [4, 8, 12, 16, 20]
+
+# Function to count fingers
+def count_fingers(hand_landmarks):
+    fingers = []
+
+    # Thumb (different logic)
+    if hand_landmarks.landmark[tip_ids[0]].x < hand_landmarks.landmark[tip_ids[0] - 1].x:
+        fingers.append(1)
+    else:
+        fingers.append(0)
+
+    # Other fingers
+    for id in range(1, 5):
+        if hand_landmarks.landmark[tip_ids[id]].y < hand_landmarks.landmark[tip_ids[id] - 2].y:
+            fingers.append(1)
+        else:
+            fingers.append(0)
+
+    return sum(fingers)
+
+# Function to toggle WiFi
+def set_wifi(state):
+    if state == "on":
+        iface.enable()
+        print("WiFi Turned ON")
+    else:
+        iface.disable()
+        print("WiFi Turned OFF")
+
+# Open webcam
+cap = cv2.VideoCapture(0)
+
+while True:
+    success, img = cap.read()
+    if not success:
+        break
+
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    results = hands.process(img_rgb)
+
+    if results.multi_hand_landmarks:
+        for hand_lms in results.multi_hand_landmarks:
+            mp_draw.draw_landmarks(img, hand_lms, mp_hands.HAND_CONNECTIONS)
+
+            fingers_up = count_fingers(hand_lms)
+
+            current_time = time.time()
+
+            if current_time - last_action_time > cooldown:
+                if fingers_up == 1:
+                    set_wifi("on")
+                    last_action_time = current_time
+                elif fingers_up == 0:
+                    set_wifi("off")
+                    last_action_time = current_time
+
+            cv2.putText(img, f'Fingers: {fingers_up}', (10, 70), cv2.FONT_HERSHEY_SIMPLEX,
+                        1, (255, 0, 0), 2)
+
+    cv2.imshow("Hand Gesture WiFi Control", img)
+    if cv2.waitKey(1) & 0xFF == 27:  # ESC to exit
+        break
+
+cap.release()
+cv2.destroyAllWindows()
